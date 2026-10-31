@@ -1,6 +1,5 @@
-// 填入 Supabase 後台 Project Settings → API 的兩個值
-// 注意：這裡只能放「Project URL」和「anon / publishable key」。
-// 絕對不要放 service_role（secret）金鑰。
+// Supabase 連線設定
+// 只能放「Project URL」和「publishable / anon key」，絕對不要放 secret / service_role 金鑰。
 window.APP_CONFIG = {
   SUPABASE_URL: 'https://mxtplozlwgnlwpgpuotu.supabase.co',
   SUPABASE_ANON_KEY: 'sb_publishable_8FAHUshJmuzORfKA-EPghg_miOcQad-'

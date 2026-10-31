@@ -19,8 +19,11 @@ create table if not exists public.teachers (
 
 create table if not exists public.students (
   id text primary key,
-  name text not null
+  name text not null,
+  teacher_ids text[] not null default '{}'   -- 指導老師
 );
+-- 舊資料庫補欄位（可重複執行）
+alter table public.students add column if not exists teacher_ids text[] not null default '{}';
 
 -- 課時費獨立存放，只有管理者讀得到
 create table if not exists public.student_rates (
