@@ -73,6 +73,8 @@ dialog h2{font:600 20px "Noto Serif TC",serif;margin:0 0 12px}
 #login{position:fixed;inset:0;z-index:50;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:20px}
 #login form{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:28px;width:min(380px,100%)}
 #login h1{font-size:26px;margin-bottom:4px}#login p{color:var(--mut);margin:0 0 16px}
+.chk{display:flex;gap:6px;align-items:center;font-size:13px;cursor:pointer}
+.info{color:var(--mut);font-size:13px;margin:-4px 0 10px}
 </style>
 </head>
 <body>
@@ -81,7 +83,7 @@ dialog h2{font:600 20px "Noto Serif TC",serif;margin:0 0 12px}
 <nav id="nav"></nav>
 <main id="app"></main>
 <div id="login"><form id="lform"><h1>提琴先生</h1><p>請登入排課系統</p><label class="f"><span>電子郵件</span><input type="email" id="lmail" required autocomplete="username"></label><label class="f"><span>密碼</span><input type="password" id="lpw" required autocomplete="current-password"></label><div class="err" id="lerr"></div><button class="btn" type="submit" style="width:100%">登入</button></form></div>
-<dialog id="dlg"></dialog><dialog id="cdlg"></dialog><dialog id="ddlg"></dialog>
+<dialog id="dlg"></dialog><dialog id="sdlg"></dialog><dialog id="cdlg"></dialog><dialog id="ddlg"></dialog>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="config.js"></script>
 <script>
@@ -104,11 +106,11 @@ const isAdmin=()=>!!ME&&ME.role==='admin',canEdit=()=>!!ME&&(ME.role==='admin'||
 const COLS=['teachers','students','lessons'],shadow={teachers:{},students:{},lessons:{},rates:{}};
 const toRow={
  teachers:t=>({id:t.id,name:t.name,inst:t.inst||[]}),
- students:x=>({id:x.id,name:x.name}),
+ students:x=>({id:x.id,name:x.name,teacher_ids:x.tids||[]}),
  lessons:l=>({id:l.id,lesson_date:l.date,start_min:l.start,dur:l.dur,room:l.room,teacher_id:l.teacher||null,students:l.students,inst:l.inst})};
 const fromRow={
  teachers:r=>({id:r.id,name:r.name,inst:r.inst||[]}),
- students:r=>({id:r.id,name:r.name}),
+ students:r=>({id:r.id,name:r.name,tids:r.teacher_ids||[]}),
  lessons:r=>({id:r.id,date:r.lesson_date,start:r.start_min,dur:r.dur,room:r.room,teacher:r.teacher_id||'',students:r.students||[],inst:r.inst})};
 const rj=x=>JSON.stringify([x.rate1??null,x.rateG??null]);
 const banner=m=>{const b=document.getElementById('bn');b.textContent=m||'';b.style.display=m?'':'none'};
@@ -147,7 +149,7 @@ function refresh(){const a=document.activeElement;if(a&&a.tagName==='INPUT'&&$('
 let pend=false;
 document.addEventListener('focusout',()=>{if(pend)setTimeout(refresh,0)});
 function applyRole(){
- if(!canEdit())document.querySelectorAll('#app .add,#app [data-x],#newL').forEach(e=>e.style.display='none');
+ if(!canEdit())document.querySelectorAll('#app .add,#app [data-x],#app [data-es],#newL').forEach(e=>e.style.display='none');
  if(!isAdmin()){const o=$('#ov');if(o)o.style.display='none';document.querySelectorAll('#app [data-open]').forEach(e=>e.style.cursor='default')}
 }
 let tab='sched',sel=ds(new Date()),qv='';
@@ -208,35 +210,73 @@ const pick=(id,ph,items,type,on)=>`<input type="search" data-f="#${id} label" pl
 
 function openL(src){
  const isNew=!src.id,l=JSON.parse(JSON.stringify(src)),dlg=$('#dlg');
+ let showAll=false;const rep={on:false,n:1,skip:false};
  const times=[];for(let m=H0*60;m<H1*60;m+=15)times.push(m);
  const opt=(v,t,s)=>`<option value="${esc(v)}"${s?' selected':''}>${esc(t)}</option>`;
+ const tList=()=>l.inst==='出租'?[{id:'',name:'（不指定）'},...S.teachers]:S.teachers.filter(t=>(t.inst||[]).includes(l.inst)||t.id===l.teacher);
+ const sList=()=>l.teacher&&!showAll?S.students.filter(x=>(x.tids||[]).includes(l.teacher)||l.students.includes(x.id)):S.students;
+ const tHtml=()=>{const L=tList();return L.length?pick('fT','搜尋老師',L,'radio',id=>id===l.teacher):`<div class="empty">目前沒有老師教授「${esc(l.inst)}」。請管理者在老師詳情中勾選教授內容。</div>`};
+ const sHtml=()=>{const L=sList(),f=l.teacher&&!showAll;return `<small style="color:var(--mut)">${f?'僅顯示「'+esc(tn(l.teacher))+'」的指導學生（'+L.length+' 位）':'顯示全部學生（'+L.length+' 位）'}</small>`+(L.length?pick('fS','搜尋學生',L,'checkbox',id=>l.students.includes(id)):'<div class="empty">此老師尚未指定學生。請到「老師與學生」編輯學生並設定指導老師，或勾選「顯示全部學生」。</div>')};
  dlg.innerHTML=`<h2>${isNew?'新增課程':'編輯課程'}</h2>
  <div class="f2"><label class="f"><span>課程類別</span><select id="fi">${INSTS.map(i=>opt(i,i,i===l.inst)).join('')}</select></label>
  <label class="f"><span>琴房</span><select id="fr">${Object.keys(ROOMS).map(r=>opt(r,r+' 琴房',r===l.room)).join('')}</select></label></div>
  <div class="f2"><label class="f"><span>日期</span><input type="date" id="fd" value="${l.date}"></label>
  <label class="f"><span>開始時間</span><select id="fs">${times.map(m=>opt(m,tm(m),m===l.start)).join('')}</select></label></div>
  <label class="f"><span>時長</span><select id="fl">${[30,45,60,90,120,180].map(m=>opt(m,m+' 分鐘',m===l.dur)).join('')}</select></label>
- <div class="f"><span>老師（出租可不選）</span>${pick('fT','搜尋老師',[{id:'',name:'（不指定）'},...S.teachers],'radio',id=>id===l.teacher)}</div>
- <div class="f"><span>學生／租借者　<b id="fsel"></b></span>${pick('fS','搜尋學生',S.students,'checkbox',id=>l.students.includes(id))}</div>
- <div class="err" id="ferr"></div>
+ ${isNew?`<div class="f"><label class="chk"><input type="checkbox" id="rp"> 每週同一時段重複</label><div id="rpw" style="display:none"><div class="f2"><label class="f"><span>共幾週（含本週，2–52）</span><input type="number" id="rn" min="2" max="52" value="12"></label><label class="chk" style="align-self:end;padding-bottom:8px"><input type="checkbox" id="rs"> 略過有衝突的日期</label></div></div></div>`:''}
+ <div class="f"><span>老師${l.inst==='出租'?'（出租可不選）':'（僅列出教授此類別的老師）'}</span><div id="fTw">${tHtml()}</div></div>
+ <div class="f"><span>學生／租借者　<b id="fsel"></b></span><label class="chk"><input type="checkbox" id="fall"> 顯示全部學生（含非此老師指導的學生）</label><div id="fSw">${sHtml()}</div></div>
+ <div class="err" id="ferr"></div><div class="info" id="finfo"></div>
  <div class="acts">${isNew?'':'<button class="btn del" id="bd">刪除</button>'}<button class="btn ghost" id="bc">取消</button><button class="btn" id="bs">儲存課程</button></div>`;
- const upd=()=>{
+ const read=()=>{
   l.inst=$('#fi').value;l.room=$('#fr').value;l.date=$('#fd').value;l.start=+$('#fs').value;l.dur=+$('#fl').value;
   const t=dlg.querySelector('#fT input:checked');l.teacher=t?t.value:'';
   l.students=[...dlg.querySelectorAll('#fS input:checked')].map(x=>x.value);
-  $('#fsel').textContent='已選 '+l.students.length+' 位・'+(l.inst==='出租'?'租借':l.students.length>1?'團體班':'一對一');
-  const er=validate(l,isNew);$('#ferr').innerHTML=er.map(x=>`<div>${esc(x)}</div>`).join('');$('#bs').disabled=!!er.length;
+  showAll=$('#fall').checked;
+  rep.on=isNew&&$('#rp').checked;rep.n=isNew?Math.max(2,Math.min(52,+$('#rn').value||2)):1;rep.skip=isNew&&$('#rs').checked;
+  if(isNew)$('#rpw').style.display=rep.on?'':'none';
  };
- dlg.oninput=upd;upd();
+ const occ=()=>[...Array(rep.on?rep.n:1)].map((_,k)=>Object.assign({},l,{date:l.date?addD(l.date,7*k):l.date}));
+ const check=()=>{const os=occ(),first=validate(os[0],isNew),bad=[];
+  if(!first.length)for(let k=1;k<os.length;k++)if(validate(os[k],false).length)bad.push(os[k].date);
+  return{os,first,bad}};
+ const fd=d=>{const x=pd(d);return (x.getMonth()+1)+'/'+x.getDate()};
+ const upd=e=>{
+  const id=e&&e.target&&e.target.id,nm=e&&e.target&&e.target.name;
+  read();
+  if(id==='fi'){if(!tList().some(t=>t.id===l.teacher))l.teacher='';$('#fTw').innerHTML=tHtml()}
+  if(id==='fi'||nm==='fT'||id==='fall'){$('#fSw').innerHTML=sHtml()}
+  $('#fsel').textContent='已選 '+l.students.length+' 位・'+(l.inst==='出租'?'租借':l.students.length>1?'團體班':'一對一');
+  const c=check(),er=[...c.first];let info='';
+  if(rep.on&&!c.first.length){
+   if(c.bad.length&&!rep.skip)er.push('以下日期有衝突：'+c.bad.map(fd).join('、')+'（可勾選「略過有衝突的日期」）');
+   else info='將建立 '+(c.os.length-c.bad.length)+' 堂課（'+fd(c.os[0].date)+' 起，共 '+c.os.length+' 週）'+(c.bad.length?'，略過 '+c.bad.length+' 個衝突日期：'+c.bad.map(fd).join('、'):'');
+  }
+  $('#ferr').innerHTML=er.map(x=>`<div>${esc(x)}</div>`).join('');$('#finfo').textContent=info;$('#bs').disabled=!!er.length;
+ };
+ dlg.oninput=e=>upd(e);upd();
  $('#bc').onclick=()=>dlg.close();
- $('#bs').onclick=()=>{upd();if(validate(l,isNew).length)return;if(isNew){l.id=uid('l');S.lessons.push(l)}else S.lessons[S.lessons.findIndex(x=>x.id===l.id)]=l;sel=l.date;save();dlg.close();render()};
+ $('#bs').onclick=()=>{upd();const c=check();if(c.first.length||(c.bad.length&&!rep.skip))return;
+  if(isNew)c.os.filter(o=>!c.bad.includes(o.date)).forEach(o=>S.lessons.push(Object.assign({},o,{id:uid('l')})));
+  else S.lessons[S.lessons.findIndex(x=>x.id===l.id)]=l;
+  sel=l.date;save();dlg.close();render()};
  if(!isNew)$('#bd').onclick=()=>ask('刪除這堂課程？',fmt(l.date)+' '+tm(l.start)+'–'+tm(l.start+l.dur)+'・'+l.room+' 琴房・'+l.inst+'。此操作無法復原。',()=>{S.lessons=S.lessons.filter(x=>x.id!==l.id);save();dlg.close();render()});
  dlg.showModal();
 }
 
+function openS(id){
+ const st=S.students.find(x=>x.id===id),d=$('#sdlg');if(!st)return;
+ d.innerHTML=`<h2>編輯學生</h2><label class="f"><span>姓名</span><input id="en" value="${esc(st.name)}"></label>
+ <div class="f"><span>指導老師（可多選；排課選了老師後，只會列出他的學生）</span>${pick('eT','搜尋老師',S.teachers,'checkbox',x=>(st.tids||[]).includes(x))}</div>
+ <div class="acts"><button class="btn ghost" id="ec">取消</button><button class="btn" id="es">儲存</button></div>`;
+ $('#ec').onclick=()=>d.close();
+ $('#es').onclick=()=>{const n=$('#en').value.trim();if(!n)return;st.name=n;st.tids=[...d.querySelectorAll('#eT input:checked')].map(x=>x.value);save();d.close();render()};
+ d.showModal();
+}
+
 function rPeople(){
  const tl=S.teachers.map(t=>`<div class="row" data-n="${esc((t.name+' '+t.inst.join(' ')).toLowerCase())}"><div data-open="t:${t.id}"><b>${esc(t.name)}</b><br><small>教授：${t.inst.map(esc).join('、')||'未設定'}</small></div><button class="btn del" data-x="t:${t.id}">刪除</button></div>`).join('')||'<div class="empty">尚無老師</div>';
- const sl=S.students.map(t=>`<div class="row" data-n="${esc(t.name.toLowerCase())}"><div data-open="s:${t.id}"><b>${esc(t.name)}</b><br><small>${S.lessons.filter(l=>l.students.includes(t.id)&&l.inst!=='出租').length} 堂課・點擊查看</small></div><button class="btn del" data-x="s:${t.id}">刪除</button></div>`).join('')||'<div class="empty">尚無學生</div>';
+ const sl=S.students.map(t=>{const gt=(t.tids||[]).map(tn).filter(Boolean),n=S.lessons.filter(l=>l.students.includes(t.id)&&l.inst!=='出租').length;return `<div class="row" data-n="${esc((t.name+' '+gt.join(' ')).toLowerCase())}"><div data-open="s:${t.id}"><b>${esc(t.name)}</b><br><small>指導：${esc(gt.join('、')||'未設定')}・${n} 堂課${isAdmin()?'・點擊查看':''}</small></div><span style="display:flex;gap:6px"><button class="btn ghost" data-es="${t.id}">編輯</button><button class="btn del" data-x="s:${t.id}">刪除</button></span></div>`}).join('')||'<div class="empty">尚無學生</div>';
  return `<div class="bar"><h2>老師與學生</h2><button class="btn" id="ov">本月總覽</button></div><div class="two"><div class="panel"><h2>老師 <small>共 ${S.teachers.length} 位</small></h2><div class="add"><input id="tn" placeholder="老師姓名"><div class="chips" id="ti">${INSTS.filter(i=>i!=='出租').map(i=>`<label><input type="checkbox" value="${i}">${i}</label>`).join('')}</div><button class="btn" id="addT">新增老師</button></div><input type="search" data-f="#tl .row" placeholder="搜尋老師姓名或樂器"><div class="list" id="tl">${tl}</div></div>
  <div class="panel"><h2>學生 <small>共 ${S.students.length} 位</small></h2><div class="add"><input id="sn" placeholder="學生姓名"><button class="btn" id="addS">新增學生</button></div><input type="search" data-f="#sl .row" placeholder="搜尋學生姓名"><div class="list" id="sl">${sl}</div></div></div>`;
 }
@@ -260,9 +300,10 @@ document.addEventListener('click',e=>{
  }
  if(T.id==='addT'){const n=g('tn').value.trim();if(!n)return;S.teachers.push({id:uid('t'),name:n,inst:[...document.querySelectorAll('#ti input:checked')].map(x=>x.value)});save();render()}
  if(T.id==='addS'){const n=g('sn').value.trim();if(!n)return;S.students.push({id:uid('s'),name:n});save();render()}
+ const es=T.closest('[data-es]');if(es)return openS(es.dataset.es);
  const x=T.dataset.x;if(x){const[k,a]=x.split(':');
   if(k==='t'){const n=S.lessons.filter(l=>l.teacher===a).length;
-   return ask('刪除老師「'+tn(a)+'」？','將同時移除其 '+n+' 堂課程（含已上過的紀錄），此操作無法復原。',()=>{S.teachers=S.teachers.filter(t=>t.id!==a);S.lessons=S.lessons.filter(l=>l.teacher!==a);save();render()})}
+   return ask('刪除老師「'+tn(a)+'」？','將同時移除其 '+n+' 堂課程（含已上過的紀錄），此操作無法復原。',()=>{S.teachers=S.teachers.filter(t=>t.id!==a);S.lessons=S.lessons.filter(l=>l.teacher!==a);S.students.forEach(s=>s.tids=(s.tids||[]).filter(i=>i!==a));save();render()})}
   if(k==='s'){const m=S.lessons.filter(l=>l.students.includes(a)),z=m.filter(l=>l.students.length===1).length;
    return ask('刪除學生「'+sn(a)+'」？','將從 '+m.length+' 堂課程中移除，其中 '+z+' 堂因沒有其他學生而一併刪除（含已上過的紀錄），此操作無法復原。',()=>{S.students=S.students.filter(t=>t.id!==a);S.lessons.forEach(l=>l.students=l.students.filter(s=>s!==a));S.lessons=S.lessons.filter(l=>l.students.length);save();render()})}}
  const o=T.closest('[data-open]');if(o){if(!isAdmin())return;const[k,id]=o.dataset.open.split(':');return askPw(()=>showDetail(k,id))}
@@ -303,6 +344,7 @@ function showDetail(k,id,mo){
   <b style="display:block;margin-top:12px">團體班（共 ${grp.length} 堂）</b><div id="dg">${grp.map(l=>`<div class="row s" data-n="${esc(l.students.map(sn).join(' ').toLowerCase())}"><span>${lbl(l)}・${l.room} 琴房・${esc(l.inst)}<br><small>學生 ${l.students.length} 位：${l.students.map(x=>esc(sn(x))).join('、')}</small></span></div>`).join('')||'<div class="empty">本月沒有團體班</div>'}</div></div>`;
  }else{
   const st=S.students.find(x=>x.id===id),f=ls=>ls.reduce((a,l)=>a+sfee(l,id),0);
+  h+=`<small style="color:var(--mut)">指導老師：${esc((st.tids||[]).map(tn).filter(Boolean).join('、')||'未設定')}</small>`;
   h+=`<div class="f"><span>課時費（元／小時，可隨時修改）</span><div class="f2"><label class="f"><span>一對一</span><input type="number" min="0" id="rf1" value="${st.rate1??''}" placeholder="例如 800"></label><label class="f"><span>團體班</span><input type="number" min="0" id="rfg" value="${st.rateG??''}" placeholder="例如 500"></label></div><div class="acts" style="align-items:center"><small id="fmsg" style="color:var(--mut)"></small><button class="btn" id="sf">儲存課時費</button></div></div>`+nav;
   h+=`<div class="stats">${stat('本月上課',sum(ml))}${stat('有史以來累計',sum(all))}<div class="stat"><small>課時費</small><b>本月 ${money(f(ml))}</b><small>累計 ${money(f(all))}</small></div></div>`;
   h+=`<b>本月課程</b><div class="list" style="max-height:240px">${ml.map(l=>`<div class="row s"><span>${lbl(l)}</span><span>${esc(l.inst)}${l.students.length>1?'（團體班）':''}・${esc(tn(l.teacher))}・${l.room}</span></div>`).join('')||'<div class="empty">本月沒有課程</div>'}</div>`;
