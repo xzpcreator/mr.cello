@@ -1,35 +1,35 @@
 -- 提琴先生・排課系統：Supabase 資料庫設定
--- 使用方式：Supabase 後台 → SQL Editor → 貼上整份 → Run（只需執行一次）
+-- 使用方式：Supabase 後台 → SQL Editor → 貼上整份 → Run（可重複執行，不會報「已存在」）
 
 create extension if not exists btree_gist;
 
 -- ========== 資料表 ==========
-create table public.profiles (
+create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text,
   role text not null default 'none' check (role in ('none','admin','staff','teacher')),
   teacher_id text            -- 角色為 teacher 時，對應 teachers.id
 );
 
-create table public.teachers (
+create table if not exists public.teachers (
   id text primary key,
   name text not null,
   inst text[] not null default '{}'
 );
 
-create table public.students (
+create table if not exists public.students (
   id text primary key,
   name text not null
 );
 
 -- 課時費獨立存放，只有管理者讀得到
-create table public.student_rates (
+create table if not exists public.student_rates (
   student_id text primary key references public.students(id) on delete cascade,
   rate1 numeric,
   rate_g numeric
 );
 
-create table public.lessons (
+create table if not exists public.lessons (
   id text primary key,
   lesson_date date not null,
   start_min int not null check (start_min between 480 and 1410),   -- 8:00 起，分鐘數
@@ -53,7 +53,7 @@ create table public.lessons (
 );
 
 -- 同一學生不能重複（學生存在陣列裡，用觸發器檢查）
-create function public.check_student_overlap() returns trigger
+create or replace function public.check_student_overlap() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   if exists (
@@ -68,28 +68,30 @@ begin
   return new;
 end $$;
 
+drop trigger if exists lessons_student_overlap on public.lessons;
 create trigger lessons_student_overlap
 before insert or update on public.lessons
 for each row execute function public.check_student_overlap();
 
 -- ========== 登入後自動建立 profile（預設無權限，需管理者開通）==========
-create function public.handle_new_user() returns trigger
+create or replace function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   insert into public.profiles (id, email) values (new.id, new.email);
   return new;
 end $$;
 
+drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
 after insert on auth.users
 for each row execute function public.handle_new_user();
 
 -- ========== 權限（Row Level Security）==========
-create function public.my_role() returns text
+create or replace function public.my_role() returns text
 language sql stable security definer set search_path = public as
 $$ select role from public.profiles where id = auth.uid() $$;
 
-create function public.my_teacher() returns text
+create or replace function public.my_teacher() returns text
 language sql stable security definer set search_path = public as
 $$ select teacher_id from public.profiles where id = auth.uid() $$;
 
@@ -100,37 +102,51 @@ alter table public.student_rates  enable row level security;
 alter table public.lessons        enable row level security;
 
 -- profiles：自己看自己，管理者可看全部與修改
-create policy profiles_read  on public.profiles for select
+drop policy if exists profiles_read on public.profiles;
+create policy profiles_read on public.profiles for select
   using (id = auth.uid() or public.my_role() = 'admin');
+drop policy if exists profiles_admin on public.profiles;
 create policy profiles_admin on public.profiles for update
   using (public.my_role() = 'admin') with check (public.my_role() = 'admin');
 
 -- teachers：管理者／櫃檯全看；老師只看自己
+drop policy if exists teachers_read on public.teachers;
 create policy teachers_read on public.teachers for select
   using (public.my_role() in ('admin','staff') or id = public.my_teacher());
+drop policy if exists teachers_write on public.teachers;
 create policy teachers_write on public.teachers for all
   using (public.my_role() in ('admin','staff')) with check (public.my_role() in ('admin','staff'));
 
 -- students：管理者／櫃檯全看；老師只看自己課堂上的學生
+drop policy if exists students_read on public.students;
 create policy students_read on public.students for select
   using (public.my_role() in ('admin','staff')
          or exists (select 1 from public.lessons l
                     where l.teacher_id = public.my_teacher() and l.students @> array[students.id]));
+drop policy if exists students_write on public.students;
 create policy students_write on public.students for all
   using (public.my_role() in ('admin','staff')) with check (public.my_role() in ('admin','staff'));
 
 -- lessons：管理者／櫃檯全看可改；老師只看自己的課，不能改
+drop policy if exists lessons_read on public.lessons;
 create policy lessons_read on public.lessons for select
   using (public.my_role() in ('admin','staff') or teacher_id = public.my_teacher());
+drop policy if exists lessons_write on public.lessons;
 create policy lessons_write on public.lessons for all
   using (public.my_role() in ('admin','staff')) with check (public.my_role() in ('admin','staff'));
 
 -- 課時費：只有管理者
+drop policy if exists rates_admin on public.student_rates;
 create policy rates_admin on public.student_rates for all
   using (public.my_role() = 'admin') with check (public.my_role() = 'admin');
 
 -- ========== 即時同步 ==========
-alter publication supabase_realtime add table public.teachers, public.students, public.lessons;
+do $$ declare t text; begin
+  foreach t in array array['teachers','students','lessons'] loop
+    begin execute format('alter publication supabase_realtime add table public.%I', t);
+    exception when duplicate_object then null; end;
+  end loop;
+end $$;
 
 -- ========== 建立第一位管理者 ==========
 -- 1) 先到 Authentication → Users → Add user 建立帳號（勾選 Auto Confirm User）
